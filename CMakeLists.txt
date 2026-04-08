@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.15)
+project(bootswap)
+
+set(CMAKE_CXX_STANDARD 17)
+add_executable(bootswap WIN32 src/main.cpp src/bcd_edit.cpp)
+if(MSVC)
+	set_target_properties(bootswap PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /OPT:REF /OPT:ICF")
+	target_compile_options(bootswap PRIVATE /GF)
+	target_compile_options(bootswap PRIVATE /EHs-c-)
+	target_compile_options(bootswap PRIVATE /GR-)
+	target_compile_options(bootswap PRIVATE /O1 /Os)
+	target_compile_options(bootswap PRIVATE /GS-)
+endif()

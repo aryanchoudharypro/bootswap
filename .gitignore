@@ -1,0 +1,27 @@
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+Testing
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.tlog
+*.idb
+
+# Dependencies
+vcpkg_installed/
