@@ -58,22 +58,83 @@ static ComPtr<IWbemClassObject> get_bcd_element(IWbemServices* services, const s
 	return element;
 }
 
-bool bcd_edit::execute_silent(const std::wstring& cmd) {
-	STARTUPINFOW si = { sizeof(STARTUPINFOW) };
-	si.dwFlags = STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	PROCESS_INFORMATION pi = { 0 };
-	std::vector<wchar_t> cmd_buf(cmd.begin(), cmd.end());
-	cmd_buf.push_back(0);
-	if (!CreateProcessW(NULL, cmd_buf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+static bool set_bcd_object_list_element(IWbemServices* services, const std::wstring& obj_path, ULONG element_type, const std::vector<std::wstring>& ids) {
+	ComPtr<IWbemClassObject> bcd_object_class;
+	if (FAILED(services->GetObject(_bstr_t(L"BcdObject"), 0, nullptr, &bcd_object_class, nullptr))) {
 		return false;
 	}
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	DWORD exit_code = 1;
-	GetExitCodeProcess(pi.hProcess, &exit_code);
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-	return exit_code == 0;
+	ComPtr<IWbemClassObject> in_def;
+	if (FAILED(bcd_object_class->GetMethod(L"SetObjectListElement", 0, &in_def, nullptr))) {
+		return false;
+	}
+	ComPtr<IWbemClassObject> in_params;
+	if (FAILED(in_def->SpawnInstance(0, &in_params))) {
+		return false;
+	}
+	_variant_t type_var(static_cast<long>(element_type));
+	if (FAILED(in_params->Put(L"Type", 0, &type_var, 0))) {
+		return false;
+	}
+	SAFEARRAY* sa = SafeArrayCreateVector(VT_BSTR, 0, static_cast<ULONG>(ids.size()));
+	if (!sa) {
+		return false;
+	}
+	for (size_t i = 0; i < ids.size(); ++i) {
+		long index = static_cast<long>(i);
+		BSTR bstr = SysAllocString(ids[i].c_str());
+		SafeArrayPutElement(sa, &index, bstr);
+		SysFreeString(bstr);
+	}
+	_variant_t ids_var;
+	ids_var.vt = VT_ARRAY | VT_BSTR;
+	ids_var.parray = sa;
+	if (FAILED(in_params->Put(L"Ids", 0, &ids_var, 0))) {
+		return false;
+	}
+	ComPtr<IWbemClassObject> out_params;
+	HRESULT hr = services->ExecMethod(_bstr_t(obj_path.c_str()), _bstr_t(L"SetObjectListElement"), 0, nullptr, in_params.Get(), &out_params, nullptr);
+	if (SUCCEEDED(hr) && out_params) {
+		_variant_t ret_val;
+		if (SUCCEEDED(out_params->Get(L"ReturnValue", 0, &ret_val, nullptr, nullptr))) {
+			if (ret_val.vt == VT_BOOL) {
+				return ret_val.boolVal != VARIANT_FALSE;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+static bool delete_bcd_object(IWbemServices* services, const std::wstring& guid) {
+	ComPtr<IWbemClassObject> bcd_store_class;
+	if (FAILED(services->GetObject(_bstr_t(L"BcdStore"), 0, nullptr, &bcd_store_class, nullptr))) {
+		return false;
+	}
+	ComPtr<IWbemClassObject> in_def;
+	if (FAILED(bcd_store_class->GetMethod(L"DeleteObject", 0, &in_def, nullptr))) {
+		return false;
+	}
+	ComPtr<IWbemClassObject> in_params;
+	if (FAILED(in_def->SpawnInstance(0, &in_params))) {
+		return false;
+	}
+	_variant_t id_var(guid.c_str());
+	if (FAILED(in_params->Put(L"Id", 0, &id_var, 0))) {
+		return false;
+	}
+	std::wstring store_path = L"BcdStore.FilePath=\"\"";
+	ComPtr<IWbemClassObject> out_params;
+	HRESULT hr = services->ExecMethod(_bstr_t(store_path.c_str()), _bstr_t(L"DeleteObject"), 0, nullptr, in_params.Get(), &out_params, nullptr);
+	if (SUCCEEDED(hr) && out_params) {
+		_variant_t ret_val;
+		if (SUCCEEDED(out_params->Get(L"ReturnValue", 0, &ret_val, nullptr, nullptr))) {
+			if (ret_val.vt == VT_BOOL) {
+				return ret_val.boolVal != VARIANT_FALSE;
+			}
+		}
+		return true;
+	}
+	return false;
 }
 
 std::vector<boot_entry> bcd_edit::get_boot_entries() {
@@ -126,14 +187,22 @@ std::vector<boot_entry> bcd_edit::get_boot_entries() {
 }
 
 bool bcd_edit::set_boot_order(const std::vector<boot_entry>& entries) {
-	std::wstring cmd = L"bcdedit /set {fwbootmgr} displayorder";
-	for (const auto& entry : entries) {
-		cmd += L" " + entry.guid;
+	auto services = wmi_connect();
+	if (!services) {
+		return false;
 	}
-	return execute_silent(cmd);
+	std::vector<std::wstring> ids;
+	for (const auto& entry : entries) {
+		ids.push_back(entry.guid);
+	}
+	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
+	return set_bcd_object_list_element(services.Get(), fwbootmgr_path, BCD_FW_DISPLAYORDER, ids);
 }
 
 bool bcd_edit::delete_entry(const std::wstring& guid) {
-	std::wstring cmd = L"bcdedit /delete " + guid;
-	return execute_silent(cmd);
+	auto services = wmi_connect();
+	if (!services) {
+		return false;
+	}
+	return delete_bcd_object(services.Get(), guid);
 }

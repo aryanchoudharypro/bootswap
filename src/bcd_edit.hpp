@@ -13,6 +13,4 @@ public:
 	static std::vector<boot_entry> get_boot_entries();
 	static bool set_boot_order(const std::vector<boot_entry>& entries);
 	static bool delete_entry(const std::wstring& guid);
-private:
-	static bool execute_silent(const std::wstring& cmd);
 };

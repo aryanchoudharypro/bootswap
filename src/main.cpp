@@ -119,6 +119,17 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT u_msg, WPARAM w_param, LPARAM l_par
 
 int WINAPI WinMain(HINSTANCE h_inst, HINSTANCE h_prev, LPSTR cmd_line, int cmd_show) {
 	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+CoInitializeSecurity(
+	NULL,
+	-1,
+	NULL,
+	NULL,
+	RPC_C_AUTHN_LEVEL_DEFAULT,
+	RPC_C_IMP_LEVEL_IMPERSONATE,
+	NULL,
+	EOAC_NONE,
+	NULL
+);
 	WNDCLASSEXW wc = {sizeof(WNDCLASSEXW)};
 	wc.lpfnWndProc = window_proc;
 	wc.hInstance = h_inst;
