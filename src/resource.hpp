@@ -9,8 +9,10 @@
 #define ID_BTN_DOWN 103
 #define ID_BTN_APPLY 104
 #define ID_BTN_DELETE 105
+#define ID_BTN_BOOT_NEXT 106
 
 // Accelerator IDs
 #define ID_ACCEL_UP 201
 #define ID_ACCEL_DOWN 202
 #define ID_ACCEL_DELETE 203
+#define ID_ACCEL_BOOT_NEXT 204

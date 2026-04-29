@@ -57,6 +57,18 @@ void delete_item(HWND hwnd) {
 	}
 }
 
+void set_boot_next(HWND hwnd) {
+	int sel = SendMessageW(h_listbox, LB_GETCURSEL, 0, 0);
+	if (sel == LB_ERR) {
+		return;
+	}
+	if (bcd_edit::set_boot_next(current_entries[sel].guid)) {
+		MessageBoxW(hwnd, L"Boot next updated for the selected entry.", L"Success", MB_OK | MB_ICONINFORMATION);
+	} else {
+		MessageBoxW(hwnd, L"Failed to update boot next. Please run as Administrator.", L"Error", MB_OK | MB_ICONERROR);
+	}
+}
+
 void apply_changes(HWND hwnd) {
 	if (bcd_edit::set_boot_order(current_entries)) {
 		MessageBoxW(hwnd, L"Boot order updated.", L"Success", MB_OK | MB_ICONINFORMATION);
@@ -85,6 +97,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT u_msg, WPARAM w_param, LPARAM l_par
 			CreateWindowExW(0, L"BUTTON", L"Up", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 370, 10, 120, 30, hwnd, (HMENU)ID_BTN_UP, NULL, NULL);
 			CreateWindowExW(0, L"BUTTON", L"Down", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 370, 50, 120, 30, hwnd, (HMENU)ID_BTN_DOWN, NULL, NULL);
 			CreateWindowExW(0, L"BUTTON", L"Delete", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 370, 90, 120, 30, hwnd, (HMENU)ID_BTN_DELETE, NULL, NULL);
+			CreateWindowExW(0, L"BUTTON", L"Boot Next", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 370, 130, 120, 30, hwnd, (HMENU)ID_BTN_BOOT_NEXT, NULL, NULL);
 			CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 370, 180, 120, 30, hwnd, (HMENU)ID_BTN_APPLY, NULL, NULL);
 			HFONT h_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 			SendMessageW(h_label, WM_SETFONT, (WPARAM)h_font, TRUE);
@@ -92,6 +105,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT u_msg, WPARAM w_param, LPARAM l_par
 			SendMessageW(GetDlgItem(hwnd, ID_BTN_UP), WM_SETFONT, (WPARAM)h_font, TRUE);
 			SendMessageW(GetDlgItem(hwnd, ID_BTN_DOWN), WM_SETFONT, (WPARAM)h_font, TRUE);
 			SendMessageW(GetDlgItem(hwnd, ID_BTN_DELETE), WM_SETFONT, (WPARAM)h_font, TRUE);
+			SendMessageW(GetDlgItem(hwnd, ID_BTN_BOOT_NEXT), WM_SETFONT, (WPARAM)h_font, TRUE);
 			SendMessageW(GetDlgItem(hwnd, ID_BTN_APPLY), WM_SETFONT, (WPARAM)h_font, TRUE);
 			load_entries(hwnd);
 			return 0;
@@ -104,6 +118,8 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT u_msg, WPARAM w_param, LPARAM l_par
 				move_item(1);
 			} else if (wm_id == ID_BTN_DELETE || wm_id == ID_ACCEL_DELETE) {
 				delete_item(hwnd);
+			} else if (wm_id == ID_BTN_BOOT_NEXT || wm_id == ID_ACCEL_BOOT_NEXT) {
+				set_boot_next(hwnd);
 			} else if (wm_id == ID_BTN_APPLY) {
 				apply_changes(hwnd);
 			}
@@ -144,9 +160,10 @@ CoInitializeSecurity(
 	ACCEL accel_table[] = {
 		{ FALT | FVIRTKEY, VK_UP, ID_ACCEL_UP },
 		{ FALT | FVIRTKEY, VK_DOWN, ID_ACCEL_DOWN },
-		{ FVIRTKEY, VK_DELETE, ID_ACCEL_DELETE }
+		{ FVIRTKEY, VK_DELETE, ID_ACCEL_DELETE },
+		{ FCONTROL | FVIRTKEY, 'N', ID_ACCEL_BOOT_NEXT }
 	};
-	HACCEL h_accel = CreateAcceleratorTableW(accel_table, 3);
+	HACCEL h_accel = CreateAcceleratorTableW(accel_table, 4);
 	MSG msg;
 	while (GetMessageW(&msg, NULL, 0, 0)) {
 		if (!TranslateAcceleratorW(hwnd, h_accel, &msg)) {

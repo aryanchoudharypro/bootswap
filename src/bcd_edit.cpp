@@ -7,6 +7,7 @@
 #pragma comment(lib, "comsuppw.lib")
 using Microsoft::WRL::ComPtr;
 static const ULONG BCD_FW_DISPLAYORDER = 0x24000001;
+static const ULONG BCD_FW_BOOTSEQUENCE = 0x24000002;
 static const ULONG BCD_APPLICATION_PATH = 0x12000002;
 static const ULONG BCD_DESCRIPTION = 0x12000004;
 
@@ -197,6 +198,17 @@ bool bcd_edit::set_boot_order(const std::vector<boot_entry>& entries) {
 	}
 	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
 	return set_bcd_object_list_element(services.Get(), fwbootmgr_path, BCD_FW_DISPLAYORDER, ids);
+}
+
+bool bcd_edit::set_boot_next(const std::wstring& guid) {
+	auto services = wmi_connect();
+	if (!services) {
+		return false;
+	}
+	std::vector<std::wstring> ids;
+	ids.push_back(guid);
+	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
+	return set_bcd_object_list_element(services.Get(), fwbootmgr_path, BCD_FW_BOOTSEQUENCE, ids);
 }
 
 bool bcd_edit::delete_entry(const std::wstring& guid) {
