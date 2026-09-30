@@ -4,6 +4,8 @@
 #include <wrl/client.h>
 #include <comdef.h>
 #include <string>
+#include <vector>
+#include <cstdio>
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "comsuppw.lib")
 using Microsoft::WRL::ComPtr;
@@ -232,75 +234,136 @@ bool bcd_edit::is_uefi() {
 	return false;
 }
 
-bool bcd_edit::run_program(const std::wstring& command_line, std::wstring& output) {
-	output.clear();
-	SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
-	HANDLE read_pipe = nullptr;
-	HANDLE write_pipe = nullptr;
-	if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0)) {
+struct wmi_param {
+	const wchar_t* name;
+	_variant_t value;
+};
+
+static std::wstring hex_error(HRESULT hr) {
+	wchar_t buffer[32];
+	swprintf_s(buffer, L"0x%08X", static_cast<unsigned>(hr));
+	return buffer;
+}
+
+static std::wstring object_path(const std::wstring& guid) {
+	return L"BcdObject.Id=\"" + guid + L"\",StoreFilePath=\"\"";
+}
+
+static bool exec_method(const wchar_t* class_name, const std::wstring& path, const wchar_t* method, const std::vector<wmi_param>& params, std::wstring& error) {
+	auto services = wmi_connect();
+	if (!services) {
+		error = L"Could not connect to the boot configuration service. Run as Administrator.";
 		return false;
 	}
-	SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
-	STARTUPINFOW si = {sizeof(si)};
-	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	si.hStdOutput = write_pipe;
-	si.hStdError = write_pipe;
-	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-	PROCESS_INFORMATION pi = {};
-	std::wstring cmd = command_line;
-	BOOL created = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-	CloseHandle(write_pipe);
-	if (!created) {
-		CloseHandle(read_pipe);
+	ComPtr<IWbemClassObject> cls;
+	ComPtr<IWbemClassObject> in_def;
+	ComPtr<IWbemClassObject> in_params;
+	HRESULT hr = services->GetObject(_bstr_t(class_name), 0, nullptr, &cls, nullptr);
+	if (SUCCEEDED(hr)) {
+		hr = cls->GetMethod(method, 0, &in_def, nullptr);
+	}
+	if (SUCCEEDED(hr)) {
+		hr = in_def->SpawnInstance(0, &in_params);
+	}
+	for (size_t i = 0; SUCCEEDED(hr) && i < params.size(); ++i) {
+		_variant_t value = params[i].value;
+		hr = in_params->Put(params[i].name, 0, &value, 0);
+	}
+	ComPtr<IWbemClassObject> out_params;
+	if (SUCCEEDED(hr)) {
+		hr = services->ExecMethod(_bstr_t(path.c_str()), _bstr_t(method), 0, nullptr, in_params.Get(), &out_params, nullptr);
+	}
+	if (FAILED(hr)) {
+		error = std::wstring(L"The boot configuration call ") + method + L" failed with error " + hex_error(hr) + L".";
 		return false;
 	}
-	std::string raw;
-	char buffer[4096];
-	DWORD got = 0;
-	while (ReadFile(read_pipe, buffer, sizeof(buffer), &got, nullptr) && got > 0) {
-		raw.append(buffer, got);
+	if (out_params) {
+		_variant_t ret_val;
+		if (SUCCEEDED(out_params->Get(L"ReturnValue", 0, &ret_val, nullptr, nullptr)) && ret_val.vt == VT_BOOL && ret_val.boolVal == VARIANT_FALSE) {
+			error = std::wstring(L"The boot configuration call ") + method + L" was rejected.";
+			return false;
+		}
 	}
-	CloseHandle(read_pipe);
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	DWORD exit_code = 1;
-	GetExitCodeProcess(pi.hProcess, &exit_code);
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-	if (!raw.empty()) {
-		int len = MultiByteToWideChar(CP_OEMCP, 0, raw.data(), static_cast<int>(raw.size()), nullptr, 0);
-		output.resize(len);
-		MultiByteToWideChar(CP_OEMCP, 0, raw.data(), static_cast<int>(raw.size()), &output[0], len);
+	return true;
+}
+
+static const wchar_t* STORE_PATH = L"BcdStore.FilePath=\"\"";
+
+bool bcd_edit::create_object(const std::wstring& guid, unsigned long type, std::wstring& error) {
+	return exec_method(L"BcdStore", STORE_PATH, L"CreateObject", {{L"Id", _variant_t(guid.c_str())}, {L"Type", _variant_t(static_cast<long>(type))}}, error);
+}
+
+bool bcd_edit::set_string_element(const std::wstring& guid, unsigned long type, const std::wstring& value, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetStringElement", {{L"Type", _variant_t(static_cast<long>(type))}, {L"String", _variant_t(value.c_str())}}, error);
+}
+
+bool bcd_edit::set_boolean_element(const std::wstring& guid, unsigned long type, bool value, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetBooleanElement", {{L"Type", _variant_t(static_cast<long>(type))}, {L"Boolean", _variant_t(value)}}, error);
+}
+
+bool bcd_edit::set_integer_element(const std::wstring& guid, unsigned long type, long value, std::wstring& error) {
+	_variant_t number;
+	number.vt = VT_BSTR;
+	number.bstrVal = SysAllocString(std::to_wstring(value).c_str());
+	return exec_method(L"BcdObject", object_path(guid), L"SetIntegerElement", {{L"Type", _variant_t(static_cast<long>(type))}, {L"Integer", number}}, error);
+}
+
+bool bcd_edit::set_object_element(const std::wstring& guid, unsigned long type, const std::wstring& target, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetObjectElement", {{L"Type", _variant_t(static_cast<long>(type))}, {L"Id", _variant_t(target.c_str())}}, error);
+}
+
+bool bcd_edit::set_partition_device(const std::wstring& guid, unsigned long type, const std::wstring& nt_path, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetPartitionDeviceElement", {{L"Type", _variant_t(static_cast<long>(type))}, {L"DeviceType", _variant_t(2L)}, {L"AdditionalOptions", _variant_t(L"")}, {L"Path", _variant_t(nt_path.c_str())}}, error);
+}
+
+bool bcd_edit::set_ramdisk_device(const std::wstring& guid, unsigned long type, const std::wstring& options_guid, const std::wstring& file_path, const std::wstring& parent_nt_path, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetFileDeviceElement", {
+		{L"Type", _variant_t(static_cast<long>(type))},
+		{L"DeviceType", _variant_t(4L)},
+		{L"AdditionalOptions", _variant_t(options_guid.c_str())},
+		{L"Path", _variant_t(file_path.c_str())},
+		{L"ParentDeviceType", _variant_t(2L)},
+		{L"ParentAdditionalOptions", _variant_t(L"")},
+		{L"ParentPath", _variant_t(parent_nt_path.c_str())}}, error);
+}
+
+bool bcd_edit::set_vhd_device(const std::wstring& guid, unsigned long type, const std::wstring& file_path, const std::wstring& parent_nt_path, std::wstring& error) {
+	return exec_method(L"BcdObject", object_path(guid), L"SetVhdDeviceElement", {
+		{L"Type", _variant_t(static_cast<long>(type))},
+		{L"Path", _variant_t(file_path.c_str())},
+		{L"ParentDeviceType", _variant_t(2L)},
+		{L"ParentAdditionalOptions", _variant_t(L"")},
+		{L"ParentPath", _variant_t(parent_nt_path.c_str())}}, error);
+}
+
+bool bcd_edit::add_to_list(boot_list list, const std::wstring& guid, std::wstring& error) {
+	auto entries = get_boot_entries(list);
+	boot_entry entry;
+	entry.guid = guid;
+	entries.push_back(entry);
+	if (!set_boot_order(list, entries)) {
+		error = L"Could not add the entry to the boot list.";
+		return false;
 	}
-	return exit_code == 0;
+	return true;
 }
 
-bool bcd_edit::run_bcdedit(const std::vector<std::wstring>& args, std::wstring& output) {
-	wchar_t sys_dir[MAX_PATH] = {};
-	GetSystemDirectoryW(sys_dir, MAX_PATH);
-	std::wstring cmd = L"\"" + std::wstring(sys_dir) + L"\\bcdedit.exe\"";
-	for (const auto& arg : args) {
-		cmd += L" \"" + arg + L"\"";
-	}
-	return run_program(cmd, output);
+bool bcd_edit::rename_entry(const std::wstring& guid, const std::wstring& name, std::wstring& error) {
+	return set_string_element(guid, BCD_DESCRIPTION, name, error);
 }
 
-bool bcd_edit::rename_entry(const std::wstring& guid, const std::wstring& name, std::wstring& output) {
-	return run_bcdedit({L"/set", guid, L"description", name}, output);
+bool bcd_edit::set_default(const std::wstring& guid, std::wstring& error) {
+	return set_object_element(BOOTMGR_GUID, 0x23000003, guid, error);
 }
 
-bool bcd_edit::set_default(const std::wstring& guid, std::wstring& output) {
-	return run_bcdedit({L"/default", guid}, output);
+bool bcd_edit::set_timeout(int seconds, std::wstring& error) {
+	return set_integer_element(BOOTMGR_GUID, 0x25000004, seconds, error);
 }
 
-bool bcd_edit::set_timeout(int seconds, std::wstring& output) {
-	return run_bcdedit({L"/timeout", std::to_wstring(seconds)}, output);
+bool bcd_edit::export_store(const std::wstring& file, std::wstring& error) {
+	return exec_method(L"BcdStore", STORE_PATH, L"ExportStore", {{L"File", _variant_t(file.c_str())}}, error);
 }
 
-bool bcd_edit::export_store(const std::wstring& file, std::wstring& output) {
-	return run_bcdedit({L"/export", file}, output);
-}
-
-bool bcd_edit::import_store(const std::wstring& file, std::wstring& output) {
-	return run_bcdedit({L"/import", file}, output);
+bool bcd_edit::import_store(const std::wstring& file, std::wstring& error) {
+	return exec_method(L"BcdStore", STORE_PATH, L"ImportStore", {{L"File", _variant_t(file.c_str())}}, error);
 }

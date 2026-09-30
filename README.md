@@ -16,6 +16,7 @@ Bootswap is a lightweight, fast, and accessible Windows utility for managing you
   * Windows setup or recovery ISO: copies sources\boot.wim and boot\boot.sdi from the ISO and creates a RAM disk entry in the Windows boot menu. Optionally copies install.wim or install.esd to the drive's sources folder so Windows Setup can find it.
   * Linux or other ISO: starts the ISO through GRUB loopback. On UEFI you supply a GRUB2 EFI file, which is copied to the EFI system partition with a generated grub.cfg, and a firmware boot entry is created. On legacy BIOS you supply GRUB4DOS (grldr and grldr.mbr in one folder) and the ISO is added to a shared GRUB4DOS menu.
   * Windows installed in a VHD or VHDX file: creates a native VHD boot entry.
+* All boot configuration changes go through the Windows BCD WMI provider, and images are opened with Windows APIs, so nothing depends on the language of command line tools.
 * Rename (F2), set as default entry (Ctrl + D), boot menu timeout, and backup and restore of the whole boot configuration, all from the menu bar.
 * Deleting a firmware entry created for a GRUB ISO also removes its files from the EFI system partition. Files copied for Windows ISO entries are kept in the Bootswap folder on the ISO's drive and can be deleted by hand.
 * Everything uses standard Windows controls, labels, menus and message boxes, so it works with screen readers and the keyboard alone.
