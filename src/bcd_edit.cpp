@@ -3,9 +3,12 @@
 #include <wbemidl.h>
 #include <wrl/client.h>
 #include <comdef.h>
+#include <string>
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "comsuppw.lib")
 using Microsoft::WRL::ComPtr;
+static const wchar_t* FWBOOTMGR_GUID = L"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}";
+static const wchar_t* BOOTMGR_GUID = L"{9dea862c-5cdd-4e70-acc1-f32b344d4795}";
 static const ULONG BCD_FW_DISPLAYORDER = 0x24000001;
 static const ULONG BCD_FW_BOOTSEQUENCE = 0x24000002;
 static const ULONG BCD_APPLICATION_PATH = 0x12000002;
@@ -138,14 +141,17 @@ static bool delete_bcd_object(IWbemServices* services, const std::wstring& guid)
 	return false;
 }
 
-std::vector<boot_entry> bcd_edit::get_boot_entries() {
+static std::wstring manager_path(boot_list list) {
+	return std::wstring(L"BcdObject.Id=\"") + (list == boot_list::firmware ? FWBOOTMGR_GUID : BOOTMGR_GUID) + L"\",StoreFilePath=\"\"";
+}
+
+std::vector<boot_entry> bcd_edit::get_boot_entries(boot_list list) {
 	std::vector<boot_entry> entries;
 	auto services = wmi_connect();
 	if (!services) {
 		return entries;
 	}
-	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
-	auto order_elem = get_bcd_element(services.Get(), fwbootmgr_path, BCD_FW_DISPLAYORDER);
+	auto order_elem = get_bcd_element(services.Get(), manager_path(list), BCD_FW_DISPLAYORDER);
 	if (!order_elem) {
 		return entries;
 	}
@@ -187,7 +193,7 @@ std::vector<boot_entry> bcd_edit::get_boot_entries() {
 	return entries;
 }
 
-bool bcd_edit::set_boot_order(const std::vector<boot_entry>& entries) {
+bool bcd_edit::set_boot_order(boot_list list, const std::vector<boot_entry>& entries) {
 	auto services = wmi_connect();
 	if (!services) {
 		return false;
@@ -196,19 +202,17 @@ bool bcd_edit::set_boot_order(const std::vector<boot_entry>& entries) {
 	for (const auto& entry : entries) {
 		ids.push_back(entry.guid);
 	}
-	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
-	return set_bcd_object_list_element(services.Get(), fwbootmgr_path, BCD_FW_DISPLAYORDER, ids);
+	return set_bcd_object_list_element(services.Get(), manager_path(list), BCD_FW_DISPLAYORDER, ids);
 }
 
-bool bcd_edit::set_boot_next(const std::wstring& guid) {
+bool bcd_edit::set_boot_next(boot_list list, const std::wstring& guid) {
 	auto services = wmi_connect();
 	if (!services) {
 		return false;
 	}
 	std::vector<std::wstring> ids;
 	ids.push_back(guid);
-	const std::wstring fwbootmgr_path = L"BcdObject.Id=\"{a5a30fa2-3d06-4e9f-b5f4-a01df9d1fcba}\",StoreFilePath=\"\"";
-	return set_bcd_object_list_element(services.Get(), fwbootmgr_path, BCD_FW_BOOTSEQUENCE, ids);
+	return set_bcd_object_list_element(services.Get(), manager_path(list), BCD_FW_BOOTSEQUENCE, ids);
 }
 
 bool bcd_edit::delete_entry(const std::wstring& guid) {
@@ -217,4 +221,86 @@ bool bcd_edit::delete_entry(const std::wstring& guid) {
 		return false;
 	}
 	return delete_bcd_object(services.Get(), guid);
+}
+
+
+bool bcd_edit::is_uefi() {
+	FIRMWARE_TYPE type = FirmwareTypeUnknown;
+	if (GetFirmwareType(&type)) {
+		return type == FirmwareTypeUefi;
+	}
+	return false;
+}
+
+bool bcd_edit::run_program(const std::wstring& command_line, std::wstring& output) {
+	output.clear();
+	SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
+	HANDLE read_pipe = nullptr;
+	HANDLE write_pipe = nullptr;
+	if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0)) {
+		return false;
+	}
+	SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0);
+	STARTUPINFOW si = {sizeof(si)};
+	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_HIDE;
+	si.hStdOutput = write_pipe;
+	si.hStdError = write_pipe;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	PROCESS_INFORMATION pi = {};
+	std::wstring cmd = command_line;
+	BOOL created = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+	CloseHandle(write_pipe);
+	if (!created) {
+		CloseHandle(read_pipe);
+		return false;
+	}
+	std::string raw;
+	char buffer[4096];
+	DWORD got = 0;
+	while (ReadFile(read_pipe, buffer, sizeof(buffer), &got, nullptr) && got > 0) {
+		raw.append(buffer, got);
+	}
+	CloseHandle(read_pipe);
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	DWORD exit_code = 1;
+	GetExitCodeProcess(pi.hProcess, &exit_code);
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+	if (!raw.empty()) {
+		int len = MultiByteToWideChar(CP_OEMCP, 0, raw.data(), static_cast<int>(raw.size()), nullptr, 0);
+		output.resize(len);
+		MultiByteToWideChar(CP_OEMCP, 0, raw.data(), static_cast<int>(raw.size()), &output[0], len);
+	}
+	return exit_code == 0;
+}
+
+bool bcd_edit::run_bcdedit(const std::vector<std::wstring>& args, std::wstring& output) {
+	wchar_t sys_dir[MAX_PATH] = {};
+	GetSystemDirectoryW(sys_dir, MAX_PATH);
+	std::wstring cmd = L"\"" + std::wstring(sys_dir) + L"\\bcdedit.exe\"";
+	for (const auto& arg : args) {
+		cmd += L" \"" + arg + L"\"";
+	}
+	return run_program(cmd, output);
+}
+
+bool bcd_edit::rename_entry(const std::wstring& guid, const std::wstring& name, std::wstring& output) {
+	return run_bcdedit({L"/set", guid, L"description", name}, output);
+}
+
+bool bcd_edit::set_default(const std::wstring& guid, std::wstring& output) {
+	return run_bcdedit({L"/default", guid}, output);
+}
+
+bool bcd_edit::set_timeout(int seconds, std::wstring& output) {
+	return run_bcdedit({L"/timeout", std::to_wstring(seconds)}, output);
+}
+
+bool bcd_edit::export_store(const std::wstring& file, std::wstring& output) {
+	return run_bcdedit({L"/export", file}, output);
+}
+
+bool bcd_edit::import_store(const std::wstring& file, std::wstring& output) {
+	return run_bcdedit({L"/import", file}, output);
 }

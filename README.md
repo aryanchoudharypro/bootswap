@@ -11,6 +11,17 @@ Bootswap is a lightweight, fast, and accessible Windows utility for managing you
   * Alt + Down: Move the selected boot entry down in the list.
   * Delete: Delete the currently selected boot entry.
 
+* Boot list selector: switch between the UEFI firmware boot entries and the Windows boot menu entries. On legacy BIOS systems only the Windows boot menu list applies.
+* Add ISO or VHD entries (Ctrl + A), which map an image on any local drive directly to a boot option:
+  * Windows setup or recovery ISO: copies sources\boot.wim and boot\boot.sdi from the ISO and creates a RAM disk entry in the Windows boot menu. Optionally copies install.wim or install.esd to the drive's sources folder so Windows Setup can find it.
+  * Linux or other ISO: starts the ISO through GRUB loopback. On UEFI you supply a GRUB2 EFI file, which is copied to the EFI system partition with a generated grub.cfg, and a firmware boot entry is created. On legacy BIOS you supply GRUB4DOS (grldr and grldr.mbr in one folder) and the ISO is added to a shared GRUB4DOS menu.
+  * Windows installed in a VHD or VHDX file: creates a native VHD boot entry.
+* Rename (F2), set as default entry (Ctrl + D), boot menu timeout, and backup and restore of the whole boot configuration, all from the menu bar.
+* Deleting a firmware entry created for a GRUB ISO also removes its files from the EFI system partition. Files copied for Windows ISO entries are kept in the Bootswap folder on the ISO's drive and can be deleted by hand.
+* Everything uses standard Windows controls, labels, menus and message boxes, so it works with screen readers and the keyboard alone.
+
+GRUB2 note: the GRUB2 EFI file must read grub.cfg from the folder it runs from (for example an image built with grub-mkimage and an empty prefix). Images with a fixed embedded prefix or embedded config will ignore the generated grub.cfg. The ISO must also use a file system GRUB can read, and the ISO itself must support loopback booting (most Ubuntu, Debian, Fedora and similar ISOs do).
+
 Note: Modifying boot entries requires administrator privileges. The application will prompt for elevation when launched.
 
 ## Prerequisites
