@@ -21,6 +21,8 @@ Bootswap is a lightweight, fast, and accessible Windows utility for managing you
 * Deleting a firmware entry created for a GRUB ISO also removes its files from the EFI system partition. Files copied for Windows ISO entries are kept in the Bootswap folder on the ISO's drive and can be deleted by hand.
 * Everything uses standard Windows controls, labels, menus and message boxes, so it works with screen readers and the keyboard alone.
 
+Getting a loader (only needed for Linux or other ISOs, and Bootswap does not download anything): for UEFI, build a GRUB2 EFI file on any Linux machine with `grub-mkimage -O x86_64-efi -p "" -o grubx64.efi part_gpt part_msdos fat ntfs exfat ext2 iso9660 loopback search configfile normal echo test sleep chain`, then pick it in the Add dialog. For legacy BIOS, take `grldr` and `grldr.mbr` from a GRUB4DOS release and keep them in the same folder.
+
 GRUB2 note: the GRUB2 EFI file must read grub.cfg from the folder it runs from (for example an image built with grub-mkimage and an empty prefix). Images with a fixed embedded prefix or embedded config will ignore the generated grub.cfg. The ISO must also use a file system GRUB can read, and the ISO itself must support loopback booting (most Ubuntu, Debian, Fedora and similar ISOs do).
 
 Note: Modifying boot entries requires administrator privileges. The application will prompt for elevation when launched.
